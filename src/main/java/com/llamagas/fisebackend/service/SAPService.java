@@ -3,6 +3,7 @@ package com.llamagas.fisebackend.service;
 import com.llamagas.fisebackend.dto.SmsPayload;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
@@ -30,6 +31,7 @@ public class SAPService {
         Map<String, Object> body = new HashMap<>();
         String uId = payload.getDni() + "-" + payload.getCupon();
         body.put("Code", uId);
+        body.put("Name", uId);
         body.put("U_id", uId);
         body.put("U_fise_numero", payload.getTelefonoFise());
         body.put("U_usr_numero", payload.getTelefonoUsr());
@@ -42,18 +44,26 @@ public class SAPService {
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
         RestTemplate restTemplate = new RestTemplate();
 
-        ResponseEntity<String> response = restTemplate.exchange(
-                "https://10.3.92.138:50000/b1s/v1/LLG_FISE_SMS01",
-                HttpMethod.POST,
-                entity,
-                String.class
-        );
-
-        if (response.getStatusCode() == HttpStatus.UNAUTHORIZED && !reintentado) {
-            sessionCookie = loginSAP(payload.getUsername(), payload.getPassword(), payload.getCompanyDb());
-            guardarEnUDO(payload, true);
-        } else if (response.getStatusCode() == HttpStatus.UNAUTHORIZED) {
-            throw new RuntimeException("No autorizado tras reintento de login a SAP.");
+        try {
+            ResponseEntity<String> response = restTemplate.exchange(
+                    "https://10.3.92.138:50000/b1s/v1/LLG_FISE_SMS01",
+                    HttpMethod.POST,
+                    entity,
+                    String.class
+            );
+            // Opcional: validar si quieres confirmar éxito explícitamente
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException("Error al guardar en UDO: " + response.getStatusCode());
+            }
+        } catch (HttpClientErrorException.Unauthorized ex) {
+            if (!reintentado) {
+                sessionCookie = loginSAP(payload.getUsername(), payload.getPassword(), payload.getCompanyDb());
+                guardarEnUDO(payload, true);  // Reintentar una vez
+            } else {
+                throw new RuntimeException("No autorizado tras reintento de login a SAP.", ex);
+            }
+        } catch (HttpClientErrorException ex) {
+            throw new RuntimeException("Error HTTP al intentar guardar en UDO: " + ex.getStatusCode(), ex);
         }
     }
 
@@ -90,3 +100,4 @@ public class SAPService {
         }
     }
 }
+ 
